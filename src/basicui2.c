@@ -4,55 +4,43 @@
 //vars
 
 
-//sesnor handles
-sensor_h gSensorHRM;
+//sensor handles
+sensor_h gSensorPPG2;
 sensor_h gSensorPPG;
 sensor_h aSensor;
-sensor_listener_h gListenerHRM;
+sensor_listener_h gListenerPPG2;
 sensor_listener_h gListenerPPG;
 sensor_listener_h aListener;
-
 
 bool gSensorSupported[2];
 
 //ppg data
-int gCount = 0;
-int gHRMCount = 0;
 int gPPGCount = 0;
-unsigned long long gHRMTimeArray[BIG_NUMBER], gPPGTimeArray[BIG_NUMBER];
-float gHRMBeatArray[BIG_NUMBER];
+double gPPGTimeArray[BIG_NUMBER];
 int gPPGLightArray[BIG_NUMBER];
 
+//timing vars
+struct timespec monotonic;
+unsigned long long monotonic_time_ns;
+int light;
+double nanoseconds;
 
-
-//Define callback
-void
-example_sensor_callback(sensor_h sensor, sensor_event_s *event, void *ad)
+static int internal_storage_id;
+static bool
+storage_cb(int storage_id, storage_type_e type, storage_state_e state,
+           const char *path, void *user_data)
 {
-	char tmp_txt[100];
-   /* If a callback function is used to listen to different sensor types, it can check the sensor type */
-   sensor_type_e type;
-   sensor_get_type(sensor, &type);
+    if (type == STORAGE_TYPE_INTERNAL) {
+        internal_storage_id = storage_id;
 
+        return false;
+    }
 
-   if (type == SENSOR_HRM_LED_GREEN) {
-       double timestamp = event->timestamp;
-       int light = event->values[0];
-       sprintf(tmp_txt, "PPG: %d", light);
-       //elm_object_text_set(ad->txt_ppg, tmp_txt);
-       gPPGTimeArray[gPPGCount] = timestamp;
-       gPPGLightArray[gPPGCount] = light;
-       gPPGCount = gPPGCount + 1;
-
-
-       dlog_print(DLOG_INFO, "MyTag", "%f  %d", timestamp, light);
-   }
-
+    return true;
 }
 
 
-
-
+//Define callback
 //automatic ui stuff
 static void
 win_delete_request_cb(void *data, Evas_Object *obj, void *event_info)
@@ -67,22 +55,97 @@ win_back_cb(void *data, Evas_Object *obj, void *event_info)
 	/* Let window go to hide state. */
 	elm_win_lower(ad->win);
 }
+
 //BACK BUTTON FUNCTION
 static void
 prev_btn_clicked_cb(void *data, Evas_Object *obj, void *event_info)
 {
     Evas_Object *nf = data;
+
+    int count = gPPGCount;
+
+
+
+    //stop listening
     sensor_listener_stop(gListenerPPG);
     sensor_destroy_listener(gListenerPPG);
+    sensor_listener_stop(aListener);
+    sensor_destroy_listener(aListener);
 
-    //Release power lock
-    device_power_release_lock(POWER_LOCK_DISPLAY);
+	//Release power lock
+	device_power_release_lock(POWER_LOCK_DISPLAY);
+	device_power_release_lock(POWER_LOCK_DISPLAY);
+	elm_naviframe_item_pop(nf);
 
-    elm_naviframe_item_pop(nf);
+
+
+   for (int i = 0; i < count; ++i)
+   {
+
+	   //print 20
+	   for (int j = i; j<20; ++j)
+	   {
+		   dlog_print(DLOG_INFO, "PPG", "%.10f %d", gPPGTimeArray[i]-gPPGTimeArray[0], gPPGLightArray[i]);
+	   }
+
+
+
+
+   }
+
+
+
+   gPPGCount = 0;
+
 }
 
 
 //Double click callback
+void
+example_sensor_callback(sensor_h sensor, sensor_event_s *event, void *ad)
+{
+	//char tmp_txt[100];
+   /* If a callback function is used to listen to different sensor types, it can check the sensor type
+   sensor_type_e type;
+   sensor_get_type(sensor, &type);
+
+   */
+
+		//get time
+	   clock_gettime(CLOCK_MONOTONIC, &monotonic);
+	   nanoseconds = monotonic.tv_nsec/1000000000.000000000;
+
+	   	//get value
+	   light = event->values[0];
+
+	   /* Store in memory
+	   gPPGTimeArray[gPPGCount] = nanoseconds + (double)monotonic.tv_sec;
+       gPPGLightArray[gPPGCount] = light;
+       gPPGCount = gPPGCount + 1;
+       */
+
+
+       dlog_print(DLOG_INFO, "PPGLive", "%.10f  %d", nanoseconds + (double)monotonic.tv_sec, light);
+      // dlog_print(DLOG_INFO, "PPGLive", "%.10f  %d", gPPGTimeArray[gPPGCount-1], gPPGLightArray[gPPGCount-1]);
+
+
+   /*
+   if (type == SENSOR_ACCELEROMETER) {
+          //unsigned long long timestamp = event->timestamp;
+          int accuracy = event->accuracy;
+          float x = event->values[0];
+          float y = event->values[1];
+          float z = event->values[2];
+
+          dlog_print(DLOG_INFO, "Accelerometer", "%f  %f %f accuracy: %d", x, y, z, accuracy);
+      }
+	*/
+
+}
+
+
+
+
 static void
 list_item_doubleclicked_cb(void *data, Evas_Object *obj, void *event_info)
 {
@@ -98,53 +161,42 @@ list_item_doubleclicked_cb(void *data, Evas_Object *obj, void *event_info)
 
     bool supported = false;
 
+    //Check storage info
+    int error;
+    error = storage_foreach_device_supported(storage_cb, NULL);
 
-    //SENSOR START
+    unsigned long long bytes;
+    error = storage_get_available_space(internal_storage_id, &bytes);
+
+    double gigabytes = bytes/(1000000000);
+
+
+    dlog_print(DLOG_INFO, "STORAGE", "%f", gigabytes);
+
+
+    //ACCELEROTMERT SETUP
+
+    /*
     sensor_is_supported(SENSOR_ACCELEROMETER, &supported);
-    if (!supported)
+    if (supported)
     {
-    		//Get sensor handle
-    	    //sensor_h accelerometer_sensor;
     	    sensor_get_default_sensor(SENSOR_ACCELEROMETER, &aSensor);
     	    sensor_create_listener(aSensor, &aListener);
-		sensor_listener_set_event_cb(gListenerPPG, 10, example_sensor_callback, NULL);
-		sensor_listener_set_attribute_int(gListenerPPG, SENSOR_ATTRIBUTE_PAUSE_POLICY, SENSOR_PAUSE_NONE);
-		sensor_listener_start(gListenerPPG);
-
+		sensor_listener_set_event_cb(aListener, 10, example_sensor_callback, NULL);
+		sensor_listener_set_attribute_int(aListener, SENSOR_ATTRIBUTE_PAUSE_POLICY, SENSOR_PAUSE_NONE);
+		sensor_listener_start(aListener);
     }
     else
     {
-
-    	 dlog_print(DLOG_INFO, "MyTag", "acceleromter is supported.");
+    	 dlog_print(DLOG_INFO, "MyTag", "acceleromter is NOT supported.");
 	}
 
+	*/
+    	//Lock screen
+    	device_power_request_lock(POWER_LOCK_DISPLAY,0);
+    	device_power_request_lock(POWER_LOCK_CPU,0);
 
-
-
-    //create listern handle
-    //sensor_listener_h listener;
-    sensor_create_listener(aSensor, &aListener);
-
-
-    //Create sensor listener
-    	/* get the default sensor of heart rate monitor */
-    	//supported = false;
-
-    /*
-    	sensor_is_supported(SENSOR_HRM, &supported);
-    	if(supported) {
-    		gSensorSupported[0] = true;
-    		sensor_get_default_sensor(SENSOR_HRM, &gSensorHRM);
-    		sensor_create_listener(gSensorHRM, &gListenerHRM);
-    		sensor_listener_set_event_cb(gListenerHRM,3, example_sensor_callback, NULL);
-    		sensor_listener_start(gListenerHRM);
-    	} else {
-    		gSensorSupported[0] = false;
-    		//elm_object_text_set(nf->txt_bpm, "BPM: not supported");
-    	}
-
-    	*/
-
+    //HRM GREEN SETUP
     	sensor_is_supported(SENSOR_HRM_LED_GREEN, &supported);
     	if(supported) {
     		gSensorSupported[1] = true;
@@ -153,15 +205,17 @@ list_item_doubleclicked_cb(void *data, Evas_Object *obj, void *event_info)
     		sensor_listener_set_event_cb(gListenerPPG, 10, example_sensor_callback, NULL);
     		sensor_listener_set_attribute_int(gListenerPPG, SENSOR_ATTRIBUTE_PAUSE_POLICY, SENSOR_PAUSE_NONE);
     		sensor_listener_start(gListenerPPG);
-    	} else {
+    	} else
+    	{
     		gSensorSupported[0] = false;
-    		//elm_object_text_set(nf->txt_ppg, "PPG: not supported");
     	}
 
 
 
 
-    nf_it = elm_naviframe_item_push(nf, "Second view", NULL,
+
+
+    nf_it = elm_naviframe_item_push(nf, "Recording Sensor Info:", NULL,
                                     NULL, navi_button, NULL);
 }
 
@@ -270,7 +324,7 @@ app_create(void *data)
 		If this function returns false, the application is terminated */
 	appdata_s *ad = data;
 
-	device_power_request_lock(POWER_LOCK_DISPLAY,0);
+
 
 	create_base_gui(ad);
 
@@ -299,6 +353,8 @@ static void
 app_terminate(void *data)
 {
 	/* Release all resources. */
+	 device_power_release_lock(POWER_LOCK_DISPLAY);
+	 device_power_release_lock(POWER_LOCK_CPU);
 }
 
 static void
@@ -369,6 +425,10 @@ main(int argc, char *argv[])
 
 	return ret;
 }
+
+
+
+
 
 
 
